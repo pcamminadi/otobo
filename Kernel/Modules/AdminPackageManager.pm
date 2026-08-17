@@ -1799,14 +1799,10 @@ sub Run {
     }
 
     # Check if OTOBO Daemon is running in the background.
-    #   Get daemon state from the cache.
-    my $DaemonRunning = $Kernel::OM->Get('Kernel::System::Cache')->Get(
-        Type => 'DaemonRunning',
-        Key  => $ConfigObject->Get('NodeID') || 1,
-    );
+    my %DaemonState = $Kernel::OM->Get('Kernel::System::Daemon::DaemonState')->Get();
     $LayoutObject->AddJSData(
         Key   => 'DaemonCheckNotRunning',
-        Value => !$DaemonRunning,
+        Value => !$DaemonState{IsRunning},
     );
 
     # Remove old package upgrade all data.

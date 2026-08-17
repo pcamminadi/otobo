@@ -31,6 +31,15 @@
             </Hash>
         </Value>
     </Setting>
+    <Setting Name="Daemon::HealthCheck::NodeIDs" Required="0" Valid="1">
+        <Description Translatable="1">Defines daemon node IDs whose shared heartbeats are used for daemon health checks. The daemon is considered running when any listed node has a fresh heartbeat. Leave empty to check the local NodeID. Separated frontend and daemon hosts require a shared cache backend.</Description>
+        <Navigation>Daemon</Navigation>
+        <Value>
+            <Array>
+                <DefaultItem ValueType="String" ValueRegex="^[1-9][0-9]{0,2}$"></DefaultItem>
+            </Array>
+        </Value>
+    </Setting>
     <Setting Name="Loader::Agent::CommonCSS###001-Daemon" Required="1" Valid="1">
         <Description Translatable="1">List of CSS files to always be loaded for the agent interface.</Description>
         <Navigation>Frontend::Base::Loader</Navigation>

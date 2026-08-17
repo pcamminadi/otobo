@@ -28,9 +28,14 @@ use Kernel::System::UnitTest::RegisterDriver;    # Set up $Kernel::OM and the te
 our $Self;
 
 my $ConfigObject = $Kernel::OM->Get('Kernel::Config');
+my $Helper       = $Kernel::OM->Get('Kernel::System::UnitTest::Helper');
 
-# Fake a running daemon.
-my $NodeID  = $ConfigObject->Get('NodeID') || 1;
+# Fake a running daemon on a separately configured node.
+my $NodeID = 999;
+$Helper->ConfigSettingChange(
+    Key   => 'Daemon::HealthCheck::NodeIDs',
+    Value => [$NodeID],
+);
 my $Running = $Kernel::OM->Get('Kernel::System::Cache')->Set(
     Type  => 'DaemonRunning',
     Key   => $NodeID,
@@ -43,8 +48,6 @@ my $Selenium = Kernel::System::UnitTest::Selenium->new( LogExecuteCommandActive 
 
 $Selenium->RunTest(
     sub {
-
-        my $Helper = $Kernel::OM->Get('Kernel::System::UnitTest::Helper');
 
         # make sure to enable cloud services
         $Helper->ConfigSettingChange(

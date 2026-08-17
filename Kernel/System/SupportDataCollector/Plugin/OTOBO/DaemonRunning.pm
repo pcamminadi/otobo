@@ -29,8 +29,7 @@ use parent qw(Kernel::System::SupportDataCollector::PluginBase);
 use Kernel::Language qw(Translatable);
 
 our @ObjectDependencies = (
-    'Kernel::Config',
-    'Kernel::System::Cache',
+    'Kernel::System::Daemon::DaemonState',
 );
 
 sub GetDisplayPath {
@@ -40,19 +39,9 @@ sub GetDisplayPath {
 sub Run {
     my $Self = shift;
 
-    # get config object
-    my $ConfigObject = $Kernel::OM->Get('Kernel::Config');
+    my %DaemonState = $Kernel::OM->Get('Kernel::System::Daemon::DaemonState')->Get();
 
-    # get the NodeID from the SysConfig settings, this is used on High Availability systems.
-    my $NodeID = $ConfigObject->Get('NodeID') || 1;
-
-    # get running daemon cache
-    my $Running = $Kernel::OM->Get('Kernel::System::Cache')->Get(
-        Type => 'DaemonRunning',
-        Key  => $NodeID,
-    );
-
-    if ($Running) {
+    if ( $DaemonState{IsRunning} ) {
         $Self->AddResultOk(
             Label   => Translatable('Daemon'),
             Value   => 1,

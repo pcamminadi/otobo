@@ -643,19 +643,9 @@ sub _SentDataOverview {
 sub _DaemonRunning {
     my ( $Self, %Param ) = @_;
 
-    # get config object
-    my $ConfigObject = $Kernel::OM->Get('Kernel::Config');
+    my %DaemonState = $Kernel::OM->Get('Kernel::System::Daemon::DaemonState')->Get();
 
-    # get the NodeID from the SysConfig settings, this is used on High Availability systems.
-    my $NodeID = $ConfigObject->Get('NodeID') || 1;
-
-    # get running daemon cache
-    my $Running = $Kernel::OM->Get('Kernel::System::Cache')->Get(
-        Type => 'DaemonRunning',
-        Key  => $NodeID,
-    );
-
-    return $Running;
+    return $DaemonState{IsRunning};
 }
 
 1;
