@@ -113,6 +113,23 @@ is( $FetchCalls, 5, 'all unsafe preload cases use the fallback' );
         elsif ( $Param{SQL} =~ m{article_flag} ) {
             $Self->{Rows} = [ [ 10, 'Important', 1 ] ];
         }
+        elsif ( $Param{SQL} =~ m{article_data_mime_send_error} ) {
+            $Self->{Rows} = [ [ 10, 'message-id', 'failed', '2026-09-09 10:00:00' ] ];
+        }
+        elsif ( $Param{SQL} =~ m{mail_queue} ) {
+            $Self->{Rows} = [
+                [ 10, '2026-09-09 10:01:00', 1, '2026-09-09 10:02:00' ],
+                [ 11, '2026-09-09 10:03:00', 2, '2026-09-09 10:04:00' ],
+            ];
+        }
+        elsif ( $Param{SQL} =~ m{SELECT sadm\.article_id} ) {
+            $Self->{Rows} = [
+                [
+                    10, 'from', 'reply-to', 'to', 'cc', 'bcc', 'subject',
+                    'message-id', 'in-reply-to', 'references', 'text/plain', 'body', 123,
+                ],
+            ];
+        }
         else {
             $Self->{Rows} = [
                 [ 10, 'a.txt', 'text/plain', 3, '', 0, 'attachment' ],
@@ -234,5 +251,88 @@ is( $AttachmentFallbackCalls, 0, 'attachment reuse avoids the original backend l
 );
 is( $AttachmentIndex{1}->{Filename}, 'fallback', 'missing preloaded rows use the backend fallback' );
 is( $AttachmentFallbackCalls, 1, 'attachment fallback was called once' );
+
+my $TransmissionStatuses = Kernel::System::Ticket::Article::ListData->TransmissionStatuses(
+    DBObject   => $DBObject,
+    TicketID   => 20,
+    ArticleIDs => [ 10, 11, 12 ],
+);
+is(
+    $TransmissionStatuses->{Statuses}->{10},
+    {
+        ArticleID  => 10,
+        MessageID  => 'message-id',
+        Message    => 'failed',
+        CreateTime => '2026-09-09 10:00:00',
+        Status     => 'Failed',
+    },
+    'failed transmission status takes precedence over a queue row',
+);
+is(
+    $TransmissionStatuses->{Statuses}->{11},
+    {
+        ArticleID  => 11,
+        CreateTime => '2026-09-09 10:03:00',
+        Attempts   => 2,
+        DueTime    => '2026-09-09 10:04:00',
+        Status     => 'Processing',
+    },
+    'queued transmission status is indexed by article ID',
+);
+ok( exists $TransmissionStatuses->{Statuses}->{12}, 'negative transmission status is retained for this request' );
+ok( !defined $TransmissionStatuses->{Statuses}->{12}, 'negative transmission status has an undefined value' );
+
+my $TransmissionFallbackCalls = 0;
+is(
+    Kernel::System::Ticket::Article::ListData->TransmissionStatus(
+        ArticleID    => 10,
+        TicketID     => 20,
+        BackendObject => bless( {}, 'Kernel::System::Ticket::Article::Backend::Email' ),
+        Snapshot     => $TransmissionStatuses,
+        Fetch        => sub { $TransmissionFallbackCalls++; return },
+    ),
+    $TransmissionStatuses->{Statuses}->{10},
+    'matching transmission status is reused',
+);
+is( $TransmissionFallbackCalls, 0, 'transmission reuse avoids the original lookup' );
+
+my $MIMERows = Kernel::System::Ticket::Article::ListData->MIMERows(
+    DBObject   => $DBObject,
+    TicketID   => 20,
+    ArticleIDs => [ 10, 11 ],
+);
+is(
+    $MIMERows->{Rows}->{10},
+    [
+        'from', 'reply-to', 'to', 'cc', 'bcc', 'subject',
+        'message-id', 'in-reply-to', 'references', 'text/plain', 'body', 123,
+    ],
+    'native MIME row is indexed for the selected page',
+);
+
+my $MIMEFallbackCalls = 0;
+is(
+    Kernel::System::Ticket::Article::ListData->MIMERowsForArticle(
+        ArticleID        => 10,
+        TicketID         => 20,
+        PreloadedMIMERows => $MIMERows,
+        Fetch            => sub { $MIMEFallbackCalls++; return [] },
+    ),
+    [ $MIMERows->{Rows}->{10} ],
+    'matching native MIME row is reused',
+);
+is( $MIMEFallbackCalls, 0, 'MIME-row reuse avoids the original query' );
+
+is(
+    Kernel::System::Ticket::Article::ListData->MIMERowsForArticle(
+        ArticleID        => 11,
+        TicketID         => 20,
+        PreloadedMIMERows => $MIMERows,
+        Fetch            => sub { $MIMEFallbackCalls++; return [['fallback']] },
+    ),
+    [['fallback']],
+    'missing MIME rows use the original query',
+);
+is( $MIMEFallbackCalls, 1, 'MIME-row fallback was called once' );
 
 done_testing();

@@ -1259,15 +1259,30 @@ sub ArticleGet {
         ';
     }
 
-    return unless $DBObject->Prepare(
-        SQL   => $SQL,
-        Bind  => \@Bind,
-        Limit => 1,
+    my $Rows = Kernel::System::Ticket::Article::ListData->MIMERowsForArticle(
+        %Param,
+        ArticleDeleted => $Article{ArticleDeleted},
+        Fetch          => sub {
+            return if !$DBObject->Prepare(
+                SQL   => $SQL,
+                Bind  => \@Bind,
+                Limit => 1,
+            );
+
+            my @Rows;
+            while ( my @Row = $DBObject->FetchrowArray() ) {
+                push @Rows, \@Row;
+            }
+
+            return \@Rows;
+        },
     );
+    return if !defined $Rows;
 
     my $EmailAddressObject = $Kernel::OM->Get('Kernel::System::EmailAddress');
     my %Data;
-    while ( my @Row = $DBObject->FetchrowArray() ) {
+    for my $Row ( @{$Rows} ) {
+        my @Row = @{$Row};
         %Data = (
             %Article,
             From         => $Row[0],

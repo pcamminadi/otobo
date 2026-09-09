@@ -2350,6 +2350,8 @@ sub _ArticleTree {
     # show article tree
     if ( !$Self->{ZoomTimeline} ) {
 
+        my $ArticleIDs = [ map { $_->{ArticleID} } @ArticleBox ];
+
         my $PreloadedImportantFlags = Kernel::System::Ticket::Article::ListData->ImportantFlags(
             DBObject => $Kernel::OM->Get('Kernel::System::DB'),
             TicketID => $Ticket{TicketID},
@@ -2358,7 +2360,12 @@ sub _ArticleTree {
         my $PreloadedAttachmentIndexes = Kernel::System::Ticket::Article::ListData->AttachmentIndexes(
             DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
             TicketID   => $Ticket{TicketID},
-            ArticleIDs => [ map { $_->{ArticleID} } @ArticleBox ],
+            ArticleIDs => $ArticleIDs,
+        );
+        my $PreloadedTransmissionStatuses = Kernel::System::Ticket::Article::ListData->TransmissionStatuses(
+            DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
+            TicketID   => $Ticket{TicketID},
+            ArticleIDs => $ArticleIDs,
         );
         my $TicketWatch;
 
@@ -2491,9 +2498,17 @@ sub _ArticleTree {
             # Get transmission status information for email articles.
             my $TransmissionStatus;
             if ( $Article{ChannelName} && $Article{ChannelName} eq 'Email' ) {
-                $TransmissionStatus = $ArticleObject->BackendForArticle(%Article)->ArticleTransmissionStatus(
-                    ArticleID           => $Article{ArticleID},
-                    ShowDeletedArticles => $Self->{ShowDeletedArticles}
+                my $ArticleBackendObject = $ArticleObject->BackendForArticle(%Article);
+                $TransmissionStatus = Kernel::System::Ticket::Article::ListData->TransmissionStatus(
+                    %Article,
+                    BackendObject => $ArticleBackendObject,
+                    Snapshot      => $PreloadedTransmissionStatuses,
+                    Fetch         => sub {
+                        return $ArticleBackendObject->ArticleTransmissionStatus(
+                            ArticleID           => $Article{ArticleID},
+                            ShowDeletedArticles => $Self->{ShowDeletedArticles},
+                        );
+                    },
                 );
             }
 
@@ -3292,6 +3307,7 @@ sub _ArticleBoxGet {
     }
 
     my @ArticleIndexes = ( $Start .. $End );
+    my $ArticleIDs = [ map { $Param{ArticleBoxAll}->[$_]->{ArticleID} } @ArticleIndexes ];
 
     my $CommunicationChannelObject = $Kernel::OM->Get('Kernel::System::CommunicationChannel');
 
@@ -3301,7 +3317,12 @@ sub _ArticleBoxGet {
     my $PreloadedEditStates = Kernel::System::Ticket::Article::ListData->EditStates(
         DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
         TicketID   => $Self->{TicketID},
-        ArticleIDs => [ map { $Param{ArticleBoxAll}->[$_]->{ArticleID} } @ArticleIndexes ],
+        ArticleIDs => $ArticleIDs,
+    );
+    my $PreloadedMIMERows = Kernel::System::Ticket::Article::ListData->MIMERows(
+        DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
+        TicketID   => $Self->{TicketID},
+        ArticleIDs => $ArticleIDs,
     );
 
     my @ArticleBox;
@@ -3316,6 +3337,7 @@ sub _ArticleBoxGet {
             TicketID      => $Self->{TicketID},
             ArticleID     => $Param{ArticleBoxAll}->[$Index]->{ArticleID},
             PreloadedEditStates => $PreloadedEditStates,
+            PreloadedMIMERows   => $PreloadedMIMERows,
             DynamicFields => 1,
             RealNames     => 1,
         );
