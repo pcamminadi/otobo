@@ -96,4 +96,143 @@ for my $Test (
 
 is( $FetchCalls, 5, 'all unsafe preload cases use the fallback' );
 
+{
+    package Local::DB;
+
+    sub new {
+        return bless { PrepareCalls => [] }, shift;
+    }
+
+    sub Prepare {
+        my ( $Self, %Param ) = @_;
+
+        push @{ $Self->{PrepareCalls} }, \%Param;
+        if ( $Param{SQL} =~ m{article_version} ) {
+            $Self->{Rows} = [ [10], [12] ];
+        }
+        elsif ( $Param{SQL} =~ m{article_flag} ) {
+            $Self->{Rows} = [ [ 10, 'Important', 1 ] ];
+        }
+        else {
+            $Self->{Rows} = [
+                [ 10, 'a.txt', 'text/plain', 3, '', 0, 'attachment' ],
+                [ 10, 'image.png', 'image/png', 5, '<cid>', 0, '' ],
+            ];
+        }
+
+        return 1;
+    }
+
+    sub FetchrowArray {
+        my ($Self) = @_;
+
+        return if !@{ $Self->{Rows} };
+
+        return @{ shift @{ $Self->{Rows} } };
+    }
+}
+
+my $DBObject = Local::DB->new();
+my $EditStates = Kernel::System::Ticket::Article::ListData->EditStates(
+    DBObject   => $DBObject,
+    TicketID   => 20,
+    ArticleIDs => [ 10, 11 ],
+);
+is(
+    $EditStates,
+    {
+        TicketID => 20,
+        States   => { 10 => 1, 11 => 0 },
+    },
+    'edit state is indexed for the selected article page',
+);
+
+my $EditFallbackCalls = 0;
+is(
+    Kernel::System::Ticket::Article::ListData->IsEdited(
+        ArticleID          => 10,
+        TicketID           => 20,
+        PreloadedEditStates => $EditStates,
+        Fetch              => sub { $EditFallbackCalls++; return 0 },
+    ),
+    1,
+    'matching preloaded edit state is reused',
+);
+is( $EditFallbackCalls, 0, 'edit-state reuse avoids the original lookup' );
+is(
+    Kernel::System::Ticket::Article::ListData->IsEdited(
+        ArticleID          => 10,
+        TicketID           => 21,
+        PreloadedEditStates => $EditStates,
+        Fetch              => sub { $EditFallbackCalls++; return 0 },
+    ),
+    0,
+    'a mismatched ticket uses the edit-state fallback',
+);
+
+is(
+    Kernel::System::Ticket::Article::ListData->ImportantFlags(
+        DBObject => $DBObject,
+        TicketID => 20,
+        UserID   => 1,
+    ),
+    { 10 => { Important => 1 } },
+    'important flags are loaded once for the ticket',
+);
+
+my $AttachmentIndexes = Kernel::System::Ticket::Article::ListData->AttachmentIndexes(
+    DBObject   => $DBObject,
+    TicketID   => 20,
+    ArticleIDs => [ 10, 11 ],
+);
+is(
+    $AttachmentIndexes->{Indexes}->{10},
+    {
+        1 => {
+            Filename           => 'a.txt',
+            ContentType        => 'text/plain',
+            FilesizeRaw        => 3,
+            ContentID          => '',
+            ContentAlternative => '',
+            Disposition        => 'attachment',
+        },
+        2 => {
+            Filename           => 'image.png',
+            ContentType        => 'image/png',
+            FilesizeRaw        => 5,
+            ContentID          => '<cid>',
+            ContentAlternative => '',
+            Disposition        => 'inline',
+        },
+    },
+    'attachment metadata keeps native ordering and disposition defaults',
+);
+
+my $AttachmentFallbackCalls = 0;
+my %AttachmentIndex = Kernel::System::Ticket::Article::ListData->AttachmentIndex(
+    ArticleID                 => 10,
+    TicketID                  => 20,
+    BackendObject             => bless( {}, 'Kernel::System::Ticket::Article::Backend::MIMEBase::ArticleStorageDB' ),
+    PreloadedAttachmentIndexes => $AttachmentIndexes,
+    Fetch                     => sub { $AttachmentFallbackCalls++; return () },
+);
+is( \%AttachmentIndex, $AttachmentIndexes->{Indexes}->{10}, 'matching DB metadata is reused' );
+$AttachmentIndex{1}->{Filename} = 'changed';
+is(
+    $AttachmentIndexes->{Indexes}->{10}->{1}->{Filename},
+    'a.txt',
+    'preloaded attachment metadata is copied before filtering',
+);
+is( $AttachmentFallbackCalls, 0, 'attachment reuse avoids the original backend lookup' );
+
+%AttachmentIndex = Kernel::System::Ticket::Article::ListData->AttachmentIndex(
+    ArticleID                 => 11,
+    TicketID                  => 20,
+    BackendObject             => bless( {}, 'Kernel::System::Ticket::Article::Backend::MIMEBase::ArticleStorageDB' ),
+    PreloadedAttachmentIndexes => $AttachmentIndexes,
+    Fetch                     => sub { $AttachmentFallbackCalls++; return ( 1 => { Filename => 'fallback' } ) },
+);
+is( $AttachmentIndex{1}->{Filename}, 'fallback', 'missing preloaded rows use the backend fallback' );
+is( $AttachmentFallbackCalls, 1, 'attachment fallback was called once' );
+
 done_testing();
