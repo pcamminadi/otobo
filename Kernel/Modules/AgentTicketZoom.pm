@@ -2458,6 +2458,7 @@ sub _ArticleTree {
 
             my %ArticleFields = $LayoutObject->ArticleFields(
                 %Article,
+                PreloadedArticle    => \%Article,
                 ShowDeletedArticles => $Self->{ShowDeletedArticles}
             );
 
