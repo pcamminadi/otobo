@@ -24,6 +24,7 @@ use utf8;
 # core modules
 use File::Basename qw(basename dirname);
 use File::Path     qw(make_path);
+use File::Temp     qw(tempfile);
 use Cwd            qw(realpath);
 
 # CPAN modules
@@ -175,6 +176,15 @@ sub ListObjects {
 
     # run blocking request
     $Self->{UserAgent}->start($Transaction);
+
+    if ( !$Transaction->result->is_success ) {
+        $Kernel::OM->Get('Kernel::System::Log')->Log(
+            Message  => $Transaction->result->body,
+            Priority => 'error',
+        );
+
+        return;
+    }
 
     # look at the Contents nodes in the returned XML
     $Transaction->res->dom->find('Contents')->map(
@@ -518,16 +528,73 @@ sub SaveObjectToFile {
         return;
     }
 
-    # Do not use the Kernel::System::Main in Kernel/Config/Defaults
-    make_path( dirname( $Param{Location} ) );
-    $Transaction->result->save_to( $Param{Location} );
+    # Do not use the Kernel::System::Main in Kernel/Config/Defaults.
+    # Publish a complete download atomically so concurrent readers never see a partial file.
+    my $DestinationDirectory = dirname( $Param{Location} );
+    make_path($DestinationDirectory);
+
+    my ( $TemporaryFilehandle, $TemporaryLocation ) = tempfile(
+        '.otobo-s3-download-XXXXXX',
+        DIR    => $DestinationDirectory,
+        UNLINK => 0,
+    );
+    close $TemporaryFilehandle;
+
+    my $Saved = eval {
+        $Transaction->result->save_to($TemporaryLocation);
+        1;
+    };
+    if ( !$Saved ) {
+        my $Error = $@ || 'unknown save error';
+        unlink $TemporaryLocation;
+        $Kernel::OM->Get('Kernel::System::Log')->Log(
+            Message  => "Could not save S3 object to temporary file: $Error",
+            Priority => 'error',
+        );
+        return;
+    }
+
+    my $SavedSize     = -s $TemporaryLocation;
+    my $ExpectedSize  = $Transaction->result->headers->content_length;
+    my $SizeIsInvalid = !defined $SavedSize || $SavedSize <= 0;
+    if ( defined $ExpectedSize && $ExpectedSize =~ m{\A\d+\z} ) {
+        $SizeIsInvalid ||= $SavedSize != $ExpectedSize;
+    }
+    if ($SizeIsInvalid) {
+        unlink $TemporaryLocation;
+        $Kernel::OM->Get('Kernel::System::Log')->Log(
+            Message  => "Incomplete S3 object download for $Param{Key}",
+            Priority => 'error',
+        );
+        return;
+    }
 
     # Touch the downloaded file to the value of LastModified from S3, e.g. 'Sat, 23 Oct 2021 11:15:14 GMT'.
     # This is useful because the mtime is used in the comparison whether a new version of the file must be downloaded.
     # $Name2Properties{$EventFileName} can't be used here as the file could have changed since the last check.
     my $LastModified = $Transaction->result->headers->last_modified;
-    my $Epoch        = Mojo::Date->new($LastModified)->epoch;
-    utime $Epoch, $Epoch, $Param{Location};
+    if ($LastModified) {
+        my $Epoch = Mojo::Date->new($LastModified)->epoch;
+        if ( !utime $Epoch, $Epoch, $TemporaryLocation ) {
+            my $Error = $!;
+            unlink $TemporaryLocation;
+            $Kernel::OM->Get('Kernel::System::Log')->Log(
+                Message  => "Could not set modification time for S3 object $Param{Key}: $Error",
+                Priority => 'error',
+            );
+            return;
+        }
+    }
+
+    if ( !rename $TemporaryLocation, $Param{Location} ) {
+        my $Error = $!;
+        unlink $TemporaryLocation;
+        $Kernel::OM->Get('Kernel::System::Log')->Log(
+            Message  => "Could not atomically publish S3 object $Param{Key}: $Error",
+            Priority => 'error',
+        );
+        return;
+    }
 
     return 1;
 }
