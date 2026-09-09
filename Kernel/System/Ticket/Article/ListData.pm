@@ -183,4 +183,149 @@ sub AttachmentIndex {
     return $Param{Fetch}->();
 }
 
+sub TransmissionStatuses {
+    my ( $Class, %Param ) = @_;
+
+    return if !$Param{TicketID};
+    return if ref $Param{ArticleIDs} ne 'ARRAY';
+
+    my %ArticleIDs = map { $_ => 1 }
+        grep { defined $_ && $_ =~ m{\A[1-9][0-9]*\z} } @{ $Param{ArticleIDs} };
+    my @ArticleIDs = sort { $a <=> $b } keys %ArticleIDs;
+    return if !@ArticleIDs;
+
+    my %Duplicate;
+    my %Errors;
+    my %Queue;
+    while (@ArticleIDs) {
+        my @Batch        = splice @ArticleIDs, 0, 500;
+        my $Placeholders = join ',', ('?') x @Batch;
+
+        for my $Kind (qw(Error Queue)) {
+            my $Table = $Kind eq 'Error' ? 'article_data_mime_send_error' : 'mail_queue';
+            my $Columns = $Kind eq 'Error'
+                ? 's.message_id, s.log_message, s.create_time'
+                : 's.create_time, s.attempts, s.due_time';
+
+            return if !$Param{DBObject}->Prepare(
+                SQL => "SELECT s.article_id, $Columns FROM $Table s"
+                    . ' INNER JOIN article a ON a.id = s.article_id'
+                    . " WHERE a.ticket_id = ? AND s.article_id IN ($Placeholders)",
+                Bind => [ \$Param{TicketID}, map { \$_ } @Batch ],
+            );
+
+            my $Rows = $Kind eq 'Error' ? \%Errors : \%Queue;
+            while ( my @Row = $Param{DBObject}->FetchrowArray() ) {
+                my $ArticleID = $Row[0];
+                $Duplicate{$ArticleID} = 1 if exists $Rows->{$ArticleID};
+                $Rows->{$ArticleID} = $Kind eq 'Error'
+                    ? {
+                        ArticleID  => $ArticleID,
+                        MessageID  => $Row[1],
+                        Message    => $Row[2],
+                        CreateTime => $Row[3],
+                        Status     => 'Failed',
+                    }
+                    : {
+                        ArticleID  => $ArticleID,
+                        CreateTime => $Row[1],
+                        Attempts   => $Row[2],
+                        DueTime    => $Row[3],
+                        Status     => 'Processing',
+                    };
+            }
+        }
+    }
+
+    my %Statuses = map { $_ => $Errors{$_} || $Queue{$_} }
+        grep { !$Duplicate{$_} } keys %ArticleIDs;
+
+    return {
+        Statuses => \%Statuses,
+        TicketID => $Param{TicketID},
+    };
+}
+
+sub TransmissionStatus {
+    my ( $Class, %Param ) = @_;
+
+    my $State = $Param{Snapshot};
+    if (
+        ref $Param{BackendObject} eq 'Kernel::System::Ticket::Article::Backend::Email'
+        && !$Param{ArticleDeleted}
+        && !$Param{IsDeleted}
+        && !$Param{VersionView}
+        && !$Param{SourceArticleID}
+        && ref $State eq 'HASH'
+        && ( $State->{TicketID} // '' ) eq ( $Param{TicketID} // '' )
+        && ref $State->{Statuses} eq 'HASH'
+        && exists $State->{Statuses}->{ $Param{ArticleID} }
+        )
+    {
+        my $Status = $State->{Statuses}->{ $Param{ArticleID} };
+
+        return $Status ? dclone($Status) : undef;
+    }
+
+    return $Param{Fetch}->();
+}
+
+sub MIMERows {
+    my ( $Class, %Param ) = @_;
+
+    return if !$Param{TicketID};
+    return if ref $Param{ArticleIDs} ne 'ARRAY';
+
+    my %ArticleIDs = map { $_ => 1 }
+        grep { defined $_ && $_ =~ m{\A[1-9][0-9]*\z} } @{ $Param{ArticleIDs} };
+    my @ArticleIDs = sort { $a <=> $b } keys %ArticleIDs;
+    return if !@ArticleIDs;
+
+    my %Duplicate;
+    my %Rows;
+    while (@ArticleIDs) {
+        my @Batch        = splice @ArticleIDs, 0, 50;
+        my $Placeholders = join ',', ('?') x @Batch;
+        return if !$Param{DBObject}->Prepare(
+            SQL => 'SELECT sadm.article_id, sadm.a_from, sadm.a_reply_to, sadm.a_to, sadm.a_cc, sadm.a_bcc,'
+                . ' sadm.a_subject, sadm.a_message_id, sadm.a_in_reply_to, sadm.a_references,'
+                . ' sadm.a_content_type, sadm.a_body, sadm.incoming_time'
+                . ' FROM article_data_mime sadm INNER JOIN article a ON a.id = sadm.article_id'
+                . " WHERE a.ticket_id = ? AND sadm.article_id IN ($Placeholders)",
+            Bind => [ \$Param{TicketID}, map { \$_ } @Batch ],
+        );
+        while ( my @Row = $Param{DBObject}->FetchrowArray() ) {
+            my $ArticleID = shift @Row;
+            $Duplicate{$ArticleID} = 1 if exists $Rows{$ArticleID};
+            $Rows{$ArticleID} = \@Row;
+        }
+    }
+    delete @Rows{ keys %Duplicate };
+
+    return {
+        Rows     => \%Rows,
+        TicketID => $Param{TicketID},
+    };
+}
+
+sub MIMERowsForArticle {
+    my ( $Class, %Param ) = @_;
+
+    my $State = $Param{PreloadedMIMERows};
+    if (
+        !$Param{ArticleDeleted}
+        && !$Param{VersionView}
+        && !$Param{SourceArticleID}
+        && ref $State eq 'HASH'
+        && ( $State->{TicketID} // '' ) eq ( $Param{TicketID} // '' )
+        && ref $State->{Rows} eq 'HASH'
+        && ref $State->{Rows}->{ $Param{ArticleID} } eq 'ARRAY'
+        )
+    {
+        return [ [ @{ $State->{Rows}->{ $Param{ArticleID} } } ] ];
+    }
+
+    return $Param{Fetch}->();
+}
+
 1;
