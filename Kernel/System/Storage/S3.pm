@@ -26,6 +26,10 @@ use File::Basename qw(basename dirname);
 use File::Path     qw(make_path);
 use File::Temp     qw(tempfile);
 use Cwd            qw(realpath);
+use Digest::SHA    qw(sha256_hex);
+
+# OTOBO modules
+use Kernel::System::Storage::S3::RequestCache;
 
 # CPAN modules
 use Mojo::UserAgent;
@@ -34,8 +38,6 @@ use Mojo::DOM ();
 use Mojo::URL;
 use Mojo::AWS::S3;
 use Plack::Util ();
-
-# OTOBO modules
 
 our @ObjectDependencies = (
     'Kernel::Config',
@@ -107,6 +109,13 @@ sub new {
         S3Object       => $S3Object,
     };
 
+    $Self->{RequestCacheScope} = sha256_hex(
+        join "\x1e", map { $ConfigObject->Get("Storage::S3::$_") // '' }
+            qw(Scheme Host Bucket HomePrefix AccessKey)
+    );
+    $Self->{ListingCachePath} = ( $ConfigObject->Get('Home') // '/opt/otobo' )
+        . '/Kernel/Config/Files/.s3-list-' . $Self->{RequestCacheScope} . '.json';
+
     return bless $Self, $Class;
 }
 
@@ -136,6 +145,30 @@ For the REST interface see L<https://docs.aws.amazon.com/AmazonS3/latest/API/API
 =cut
 
 sub ListObjects {
+    my ( $Self, %Param ) = @_;
+
+    if (
+        ( $Param{Prefix} // '' ) eq 'Kernel/Config/Files/'
+        && exists $Param{Delimiter}
+        && $Param{Delimiter} eq ''
+        )
+    {
+        my $Value = Kernel::System::Storage::S3::RequestCache->Listing(
+            Path  => $Self->{ListingCachePath},
+            Fetch => sub {
+                my %Result = $Self->_ListObjectsRequest(%Param);
+
+                return \%Result;
+            },
+        );
+
+        return $Value ? %{$Value} : ();
+    }
+
+    return $Self->_ListObjectsRequest(%Param);
+}
+
+sub _ListObjectsRequest {
     my ( $Self, %Param ) = @_;
 
     # check needed params
@@ -269,7 +302,11 @@ sub StoreObject {
     $Self->{UserAgent}->start($Transaction);
 
     # $Transaction->result is a Mojo::Message::Response object
-    return $Param{Key} if $Transaction->result->is_success;
+    if ( $Transaction->result->is_success ) {
+        $Self->_RequestCacheInvalidate( Key => $Param{Key} );
+
+        return $Param{Key};
+    }
 
     # log the error message
     $Kernel::OM->Get('Kernel::System::Log')->Log(
@@ -288,6 +325,43 @@ to be documented
 =cut
 
 sub ObjectExists {
+    my ( $Self, %Param ) = @_;
+
+    return $Self->_ObjectExistsRequest(%Param) if !$Param{UseCache};
+
+    return Kernel::System::Storage::S3::RequestCache->Exists(
+        CacheObject => $Kernel::OM->Get('Kernel::System::Cache'),
+        Fetch       => sub { return $Self->_ObjectExistsRequest(%Param) },
+        Key         => $Self->_ExistenceCacheKey( $Param{Key} ),
+    );
+}
+
+sub _ExistenceCacheKey {
+    my ( $Self, $Key ) = @_;
+
+    return 'S3ExistsV1:' . $Self->{RequestCacheScope} . ':' . sha256_hex($Key);
+}
+
+sub _RequestCacheInvalidate {
+    my ( $Self, %Param ) = @_;
+
+    if ( $Param{Key} ) {
+        $Kernel::OM->Get('Kernel::System::Cache')->Delete(
+            Type => 'Loader',
+            Key  => $Self->_ExistenceCacheKey( $Param{Key} ),
+        );
+    }
+
+    if ( ( $Param{Key} // '' ) =~ m{\AKernel/Config/Files/} ) {
+        Kernel::System::Storage::S3::RequestCache->InvalidateListing(
+            Path => $Self->{ListingCachePath},
+        );
+    }
+
+    return;
+}
+
+sub _ObjectExistsRequest {
     my ( $Self, %Param ) = @_;
 
     # check needed params
@@ -637,7 +711,11 @@ sub DiscardObject {
 
     # $Transaction->result is a Mojo::Message::Response object
     # success is indicated even when no object was deleted
-    return 1 if $Transaction->result->is_success;
+    if ( $Transaction->result->is_success ) {
+        $Self->_RequestCacheInvalidate( Key => $Param{Key} );
+
+        return 1;
+    }
 
     # log the error message
     $Kernel::OM->Get('Kernel::System::Log')->Log(
@@ -736,6 +814,12 @@ sub DiscardObjects {
 
     # run blocking request
     $Self->{UserAgent}->start($Transaction);
+
+    for my $Filename ( keys %Name2Properties ) {
+        $Self->_RequestCacheInvalidate(
+            Key => "$Param{Prefix}$Filename",
+        );
+    }
 
     # the S3 backend does not support storing articles in mixed backends
     # TODO: check success
