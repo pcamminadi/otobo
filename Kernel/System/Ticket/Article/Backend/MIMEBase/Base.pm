@@ -18,7 +18,13 @@ package Kernel::System::Ticket::Article::Backend::MIMEBase::Base;
 
 use strict;
 use warnings;
+
+# core modules
 use File::Path qw(remove_tree);
+use List::Util qw(any);
+
+# OTOBO modules
+use Kernel::System::Ticket::Article::ListData;
 
 our $ObjectManagerDisabled = 1;
 
@@ -151,7 +157,11 @@ sub ArticleAttachmentIndex {
     }
 
     # Get complete attachment index from backend.
-    my %Attachments = $Self->ArticleAttachmentIndexRaw(%Param);
+    my %Attachments = Kernel::System::Ticket::Article::ListData->AttachmentIndex(
+        %Param,
+        BackendObject => $Self,
+        Fetch         => sub { return $Self->ArticleAttachmentIndexRaw(%Param) },
+    );
 
     # Iterate over attachments only if any of optional parameters is active.
     if ( $Param{ExcludePlainText} || $Param{ExcludeHTMLBody} || $Param{ExcludeInline} || $Param{OnlyHTMLBody} ) {
@@ -221,7 +231,12 @@ sub ArticleAttachmentIndex {
         #   disposition, since this method of detection is unreliable. Please see bug#13353 for more information.
         my @AttachmentIDsInline;
 
-        if ($AttachmentIDHTML) {
+        my $NeedsInlineScan = $Param{ExcludeInline} && any {
+            $Attachments{$_}->{ContentType} =~ m{image}ixms
+                && $Attachments{$_}->{ContentID}
+        } keys %Attachments;
+
+        if ( $AttachmentIDHTML && $NeedsInlineScan ) {
 
             # Get HTML article body.
             my %HTMLBody = $Self->ArticleAttachment(

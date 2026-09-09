@@ -30,6 +30,7 @@ use POSIX      qw(ceil);
 
 # OTOBO modules
 use Kernel::System::VariableCheck qw(:all);
+use Kernel::System::Ticket::Article::ListData;
 use Kernel::Language              qw(Translatable);
 
 sub new {
@@ -2349,6 +2350,18 @@ sub _ArticleTree {
     # show article tree
     if ( !$Self->{ZoomTimeline} ) {
 
+        my $PreloadedImportantFlags = Kernel::System::Ticket::Article::ListData->ImportantFlags(
+            DBObject => $Kernel::OM->Get('Kernel::System::DB'),
+            TicketID => $Ticket{TicketID},
+            UserID   => 1,
+        );
+        my $PreloadedAttachmentIndexes = Kernel::System::Ticket::Article::ListData->AttachmentIndexes(
+            DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
+            TicketID   => $Ticket{TicketID},
+            ArticleIDs => [ map { $_->{ArticleID} } @ArticleBox ],
+        );
+        my $TicketWatch;
+
         $LayoutObject->Block(
             Name => 'ArticleList',
             Data => {
@@ -2428,10 +2441,12 @@ sub _ArticleTree {
                     $ShowMeta = 1;
                 }
                 if ( !$ShowMeta && $ConfigObject->Get('Ticket::Watcher') ) {
-                    my %Watch = $TicketObject->TicketWatchGet(
-                        TicketID => $Article{TicketID},
-                    );
-                    if ( $Watch{ $Self->{UserID} } ) {
+                    $TicketWatch //= {
+                        $TicketObject->TicketWatchGet(
+                            TicketID => $Article{TicketID},
+                        )
+                    };
+                    if ( $TicketWatch->{ $Self->{UserID} } ) {
                         $ShowMeta = 1;
                     }
                 }
@@ -2500,10 +2515,12 @@ sub _ArticleTree {
 
             # get article flags
             # Always use user id 1 because other users also have to see the important flag
-            my %ArticleImportantFlags = $ArticleObject->ArticleFlagGet(
-                ArticleID => $Article{ArticleID},
-                UserID    => 1,
-            );
+            my %ArticleImportantFlags = !$Article{ArticleDeleted} && defined $PreloadedImportantFlags
+                ? %{ $PreloadedImportantFlags->{ $Article{ArticleID} } || {} }
+                : $ArticleObject->ArticleFlagGet(
+                    ArticleID => $Article{ArticleID},
+                    UserID    => 1,
+                );
 
             # show important flag
             if ( $ArticleImportantFlags{Important} ) {
@@ -2551,6 +2568,8 @@ sub _ArticleTree {
             if ( !$Article{ArticleDeleted} || $Self->{ArticleStorage} =~ m/ArticleStorageFS/ ) {
                 %AtmIndex = $ArticleObject->BackendForArticle(%Article)->ArticleAttachmentIndex(
                     ArticleID           => $Article{ArticleID},
+                    TicketID            => $Article{TicketID},
+                    PreloadedAttachmentIndexes => $PreloadedAttachmentIndexes,
                     ShowDeletedArticles => $Self->{ShowDeletedArticles},
                     %{ $Self->{ExcludeAttachments} },
                 );
@@ -3279,6 +3298,12 @@ sub _ArticleBoxGet {
     # Save communication channel data to improve performance.
     my %CommunicationChannelData;
 
+    my $PreloadedEditStates = Kernel::System::Ticket::Article::ListData->EditStates(
+        DBObject   => $Kernel::OM->Get('Kernel::System::DB'),
+        TicketID   => $Self->{TicketID},
+        ArticleIDs => [ map { $Param{ArticleBoxAll}->[$_]->{ArticleID} } @ArticleIndexes ],
+    );
+
     my @ArticleBox;
     for my $Index (@ArticleIndexes) {
         my $ArticleBackendObject = $ArticleObject->BackendForArticle(
@@ -3290,6 +3315,7 @@ sub _ArticleBoxGet {
         my %Article = $ArticleBackendObject->ArticleGet(
             TicketID      => $Self->{TicketID},
             ArticleID     => $Param{ArticleBoxAll}->[$Index]->{ArticleID},
+            PreloadedEditStates => $PreloadedEditStates,
             DynamicFields => 1,
             RealNames     => 1,
         );

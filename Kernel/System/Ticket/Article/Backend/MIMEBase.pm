@@ -27,6 +27,7 @@ use parent 'Kernel::System::Ticket::Article::Backend::Base';
 
 # OTOBO modules
 use Kernel::System::VariableCheck qw(:all);
+use Kernel::System::Ticket::Article::ListData;
 
 our @ObjectDependencies = (
     'Kernel::Config',
@@ -1214,9 +1215,14 @@ sub ArticleGet {
 
     return unless %Article;
 
-    my $ArticleEdited = $Kernel::OM->Get('Kernel::System::Ticket::ArticleFeatures')->IsArticleEdited(
-        TicketID  => $Param{TicketID},
-        ArticleID => $Param{ArticleID}
+    my $ArticleEdited = Kernel::System::Ticket::Article::ListData->IsEdited(
+        %Param,
+        Fetch => sub {
+            return $Kernel::OM->Get('Kernel::System::Ticket::ArticleFeatures')->IsArticleEdited(
+                TicketID  => $Param{TicketID},
+                ArticleID => $Param{ArticleID},
+            );
+        },
     );
 
     my %ArticleSenderTypeList = $Kernel::OM->Get('Kernel::System::Ticket::Article')->ArticleSenderTypeList();
