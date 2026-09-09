@@ -205,7 +205,8 @@ sub MinifyFiles {
         my $Key      = $FilePath =~ s!^$Home/!!r;                          # /opt/otobo/var/httpd becomes var/httpd
 
         $LoaderFileExists = $StorageS3Object->ObjectExists(
-            Key => $Key,
+            Key      => $Key,
+            UseCache => 1,
         );
     }
 

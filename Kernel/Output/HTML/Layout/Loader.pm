@@ -353,7 +353,8 @@ sub LoaderCreateJavaScriptTemplateData {
             # might have neither the local file nor the fallback to S3.
             my $StorageS3Object = $Kernel::OM->Get('Kernel::System::Storage::S3');
             $CacheFileFound = $StorageS3Object->ObjectExists(
-                Key => "$JSCachePath/$TemplateCacheFile",
+                Key      => "$JSCachePath/$TemplateCacheFile",
+                UseCache => 1,
             );
         }
         else {
@@ -508,7 +509,8 @@ sub LoaderCreateJavaScriptTranslationData {
         # might have neither the local file nor the fallback to S3.
         my $StorageS3Object = $Kernel::OM->Get('Kernel::System::Storage::S3');
         $CacheFileFound = $StorageS3Object->ObjectExists(
-            Key => "$JSCachePath/$TemplateCacheFile",
+            Key      => "$JSCachePath/$TemplateCacheFile",
+            UseCache => 1,
         );
     }
     else {
