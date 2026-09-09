@@ -27,6 +27,7 @@ use parent 'Kernel::Output::HTML::Article::Base';
 
 # OTOBO modules
 use Kernel::Language              qw(Translatable);
+use Kernel::System::Ticket::Article::ListData;
 use Kernel::System::VariableCheck qw(:all);
 
 our @ObjectDependencies = (
@@ -110,10 +111,15 @@ sub ArticleFields {
         DynamicFields => 0,
     );
 
-    my %Article = $ArticleBackendObject->ArticleGet(
+    my %Article = Kernel::System::Ticket::Article::ListData->ArticleForFields(
         %Param,
-        DynamicFields => 1,
-        RealNames     => 1,
+        Fetch => sub {
+            return $ArticleBackendObject->ArticleGet(
+                %Param,
+                DynamicFields => 1,
+                RealNames     => 1,
+            );
+        },
     );
 
     # cleanup subject
