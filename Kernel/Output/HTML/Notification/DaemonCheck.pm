@@ -24,28 +24,17 @@ use warnings;
 use Kernel::System::VariableCheck qw(:all);
 
 our @ObjectDependencies = (
-    'Kernel::Config',
     'Kernel::Output::HTML::Layout',
-    'Kernel::System::Cache',
+    'Kernel::System::Daemon::DaemonState',
     'Kernel::System::Group',
 );
 
 sub Run {
     my ( $Self, %Param ) = @_;
 
-    # get config object
-    my $ConfigObject = $Kernel::OM->Get('Kernel::Config');
+    my %DaemonState = $Kernel::OM->Get('Kernel::System::Daemon::DaemonState')->Get();
 
-    # get the NodeID from the SysConfig settings, this is used on High Availability systems.
-    my $NodeID = $ConfigObject->Get('NodeID') || 1;
-
-    # get running daemon cache
-    my $Running = $Kernel::OM->Get('Kernel::System::Cache')->Get(
-        Type => 'DaemonRunning',
-        Key  => $NodeID,
-    );
-
-    return '' if $Running;
+    return '' if $DaemonState{IsRunning};
 
     # get layout object
     my $LayoutObject = $Kernel::OM->Get('Kernel::Output::HTML::Layout');

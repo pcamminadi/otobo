@@ -1,5 +1,6 @@
 
 # OTOBO 11.1.0 beta2 2026-07-27
+- 2026-08-17 [Bugfix] Allow daemon health checks to monitor configured daemon node IDs (https://github.com/RotherOSS/otobo/issues/1369)
 - 2026-07-24 16:22:31 +0200 Allow to pass subroutines as validator in K::S::Web::Request::Get() (https://github.com/RotherOSS/otobo/issues/5779)
 - 2026-07-24 12:28:37 +0200 Upgrade Perl to version 5.44 in the Docker image (https://github.com/RotherOSS/otobo/issues/5909)
 - 2026-07-24 10:39:52 +0200 Improve Input Validation in rel-11_1 (https://github.com/RotherOSS/otobo/issues/5564) - in progress
@@ -3495,4 +3496,3 @@
 
 # OTOBO 10.0.0 beta1 2020-01-30
  - First official OTOBO release, yippie!
-
